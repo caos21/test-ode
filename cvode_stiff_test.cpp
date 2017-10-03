@@ -1,6 +1,23 @@
 /*
-The contents of this file is free and unencumbered software released into the
-public domain. For more information, please refer to <http://unlicense.org/>
+Copyright <2017> <Benjamin Santos>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 */
 
 #include <iostream>
@@ -11,6 +28,7 @@ public domain. For more information, please refer to <http://unlicense.org/>
 #include <cvode/cvode_diag.h>
 #include <nvector/nvector_serial.h>
 #include <sundials/sundials_types.h>
+#include <sundials/sundials_math.h>
 
 // typedef int (*CVRhsFn)(realtype t, N_Vector y, N_Vector ydot, void *user_data);
 
@@ -71,7 +89,7 @@ public:
     realtype t, tout;
     for(iout=1, tout=ti+dt; tout <= tf; iout++, tout += dt) {
       flag = CVode(cvode_mem, tout, y, &t, CV_NORMAL);
-      std::cout << tout << '\t' << NV_Ith_S(y,0) << '\t' << NV_Ith_S(y,1) << '\n'; 
+      std::cout << tout << '\t' << NV_Ith_S(y,0) << '\t' << NV_Ith_S(y,1) << '\t' << ABS(NV_Ith_S(y,1)) << '\n'; 
       if (flag != CV_SUCCESS) {
         std::cerr << "\n[ee] Terminate. Flag : " << flag << "\n";
         std::terminate();
