@@ -8,9 +8,11 @@ set(EXTRA_LINK_LIBS m)
 set(SUNDIALS_LIBS ${CVODE_LIB} ${NVECS_LIB} ${EXTRA_LINK_LIBS})
 
 add_executable(cvode_stiff_test cvode_stiff_test.cpp)
-target_link_libraries(cvode_stiff_test ${SUNDIALS_LIBS})
 
+target_link_libraries(cvode_stiff_test ${SUNDIALS_LIBS})
 
 # boost example
 add_executable(stiff_system stiff_system.cpp)
 
+# boost rk54 cash karp
+add_executable(stiff_system_rk-ck54 stiff_system_rk-ck54.cpp)
