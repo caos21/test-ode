@@ -32,7 +32,7 @@ Sundials CVODE and BOOST test
  make
  ```
  
- - Two executables should be created `stiff_system` from boost documentation and `cvode_stiff_test`.
+ - Three executables should be created `stiff_system` from boost documentation, `stiff_system_rk-ck54` and `cvode_stiff_test`.
  
  ## Run
  
@@ -52,7 +52,7 @@ Sundials CVODE and BOOST test
  ./stiff_system > boost.dat 
  ```
  
- 3. Plot results
+ 4. Plot results
  ```
  xmgrace -par comp.par -block cvode.dat -bxy 1:4  -block boost.dat -bxy 1:3
  ```
