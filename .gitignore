@@ -1,0 +1,9 @@
+build/
+
+.ipynb_checkpoints/
+
+__pycache__/
+
+react/.ipynb_checkpoints/
+
+react/__pycache__/

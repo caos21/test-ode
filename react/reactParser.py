@@ -109,7 +109,7 @@ class reactParser ( Parser ):
 
     def __init__(self, input:TokenStream):
         super().__init__(input)
-        self.checkVersion("4.6")
+        self.checkVersion("4.7")
         self._interp = ParserATNSimulator(self, self.atn, self.decisionsToDFA, self.sharedContextCache)
         self._predicates = None
 

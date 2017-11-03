@@ -118,6 +118,7 @@ class MyVisitor(reactVisitor):
     for ispec, species in enumerate(self.species):
       if species not in self.constants:
         sode = str()
+        strdiff = (str(' - D[' + species + ']' + species) if species in self.diffusions else '')
         #sode.append("d[" + species + "]/dt  = ")
         sode += "d[" + species + "]/dt  ="
         for ia, aelem in enumerate(self.aelements):
@@ -130,12 +131,13 @@ class MyVisitor(reactVisitor):
             sode +=  strprefac + str(list(self.rates.items())[aelem[0][1]][0])
             # select component of p
             for p in self.pvector[aelem[0][1]]:
-              sode += ' ' +  str(list(self.species.items())[p[0]][0]) + (('^' + str(int(p[1]))) if p[1]>1 else '')
+              sode += (' ' +  str(list(self.species.items())[p[0]][0])
+                       + (('^' + str(int(p[1]))) if p[1]>1 else ''))
             #print(pcomp[isp])
           #for ip, pcomp in enumerate(self.pvector):
             #print
             #print(aelem, pcomp)
-        print(sode)
+        print(sode+strdiff)
 
   def printJacobian(self):
     # iterate in species, rows
@@ -146,6 +148,9 @@ class MyVisitor(reactVisitor):
         jacode = str()
         # iterate in species, cols
         redcol = 0
+        strdiff = (str(' - D[' + ispecies + ']') if ispecies in self.diffusions else '')
+        if strdiff:
+          print('J', (redrow, redrow), '=', strdiff)
         for jspec, jspecies in enumerate(self.species):
           # check if species is constant
           if jspecies not in self.constants:
@@ -481,7 +486,7 @@ if __name__ == '__main__':
     visitor.visit(tree)
 
     #print("Constants  : ", visitor.constants)
-    #print("Diffusions : ", visitor.diffusions)
+    print("Diffusions : ", visitor.diffusions)
     #print("Species    : ", visitor.species)
     #print("Reactants  : ", visitor.reactants)
     #print("Products   : ", visitor.products)

@@ -16,3 +16,5 @@ Ar* + Ar* -> Ar + Ar+ + e kmp 6.2E-16;
 Ar* + Ar -> 2Ar k2q 3.0E-21;
 # 8 - Three body quenching
 Ar* + 2Ar -> Ar2 + Ar k3q 1.1e-43;
+# 9 - Diffusions
+D[e] = 1200.0; D[Ar+] = 0.04; D[Ar*] = 0.075;
