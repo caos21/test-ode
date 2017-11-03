@@ -1,0 +1,18 @@
+# 0 - Constants : Ar, Ar2 and Ar_r
+Ar = 3.22e21; Ar2; Ar_r;
+# 1 - Ionization | rate | Aconstant | Eactivation | beta
+Ar + e -> Ar+ + 2e ki 7.057e-17 16.125 0.6;
+# 2 - Excitation
+Ar + e -> Ar* + e kex 1.169e-14 12.431;
+# 3 - Step-wise ionization
+Ar* + e -> Ar+ + 2e ksi 1.249e-13 5.385;
+# 4 - Superelastic collisions
+Ar* + e -> Ar + e ksc 4.317e-16 0.0 0.74;
+# 5 - Quenching to resonant
+Ar* + e -> Ar_r + e kr 2.0E-13;
+# 6 - Metastable pooling
+Ar* + Ar* -> Ar + Ar+ + e kmp 6.2E-16;
+# 7 - Two body quenching
+Ar* + Ar -> 2Ar k2q 3.0E-21;
+# 8 - Three body quenching
+Ar* + 2Ar -> Ar2 + Ar k3q 1.1e-43;

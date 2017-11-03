@@ -1,21 +1,12 @@
 /*
 * Grammar for reactions
 *
+* copyright = "Copyright 2017, Benjamin Santos"
+* license = "Apache v2.0"
+*
 */
 
 grammar react;
-
-// @header {
-// }
-// 
-// @parser::members {
-// def eval(self, left, op, right):
-//   if reactParser.combineOperator == op.type:
-//     return left, right
-//   else:
-//     return 0
-// }
-
 
 // A collection of entry
 entries
@@ -28,7 +19,7 @@ entries
 // - constant ( Ar+ = 1.5e-21; ) or
 // - reaction ( Ar* + Ar* -> Ar + Ar+ + 2e; )
 entry
-  : comment | ((constant | (diffusion | reaction)) SEMICOLON)
+  : COMMENT | ((constant | (diffusion | reaction)) SEMICOLON)
   ;
 
 // A reaction is one of more reactants which produce
@@ -118,9 +109,9 @@ scientific
   : (PLUS | MINUS)?SCIENTIFIC_NUMBER
   ;
 
-comment
-  : COMMENT
-  ;
+// comment
+//   : COMMENT
+//   ;
 
 // comment line
 COMMENT
