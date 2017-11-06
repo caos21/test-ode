@@ -21,6 +21,13 @@ from antlr4.InputStream import InputStream
 from reactLexer import reactLexer
 from reactParser import reactParser
 from reactVisitor import reactVisitor
+from scipy.constants import constants
+from scipy.constants import physical_constants
+from scipy.integrate import ode
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+kbev = physical_constants['Boltzmann constant in eV/K'][0]
 
 import numpy as np
 
@@ -33,11 +40,20 @@ def updateReplace(d, key, value):
     #print("[ii] Reassigning value ", d[key], " by ", value ," for key ", key)
     d[key] = value
 
-class MyVisitor(reactVisitor):
+class ReactVisitor(reactVisitor):
+  """ Reactions and SODE
+
+      Attributes
+      ----------
+      constants : stores the constants for the system
+      diffusions : stores the diffusion constants for the species
+      species : stores all the species of the system
+  """
   def __init__(self):
     self.constants = OrderedDict({})
     self.diffusions = OrderedDict({})
     self.species = OrderedDict({})
+    self.variablespecies = OrderedDict({})
     self.reactants = OrderedDict({})
     self.products = OrderedDict({})
     self.reactantslist = []
@@ -55,7 +71,13 @@ class MyVisitor(reactVisitor):
     self.jelements = []
     self.jacelements = []
 
-    self.variablespecies = []
+    self.ratevalues = []
+
+    self.nsode = []
+    self.jacobian = []
+
+    self.odesystem = []
+    self.odeindices = OrderedDict({})
 
   def uniqueTupleListSum(self, mylist):
     """  Returns a list of tuple, where each tuple is unique by its first
@@ -113,8 +135,50 @@ class MyVisitor(reactVisitor):
     return [((second, first), third) for ((first, second), third) in aelem  if third != 0.0]
 
 
+  def filterSpecies(self):
+    """ Filter variable species from species list
+        no constants
+    """
+    for specname, specval in self.species.items():
+      if specname not in self.constants:
+        self.variablespecies.update({specname: specval})
+        print(specname)
+
+  def arrheniusRate(self, energy, rateval):
+    """ Update rates
+    """
+    a = rateval['aconstant']
+
+    print(len(rateval))
+    if len(rateval) == 1:
+      return a
+
+    if len(rateval) == 2:
+      ea = rateval['eactivation']
+      efactor = np.exp(-3.0*ea/(2.0*energy))
+      return a * efactor
+
+    if len(rateval) == 3:
+      ea = rateval['eactivation']
+      beta = rateval['beta']
+      tfactor = (2.0*energy/(3.0*kbev))**beta
+      efactor = np.exp(-3.0*ea/(2.0*energy))
+      return a*tfactor*efactor
+
+  def updateRates(self, energy):
+    """ Update rates
+    """
+    for irate, (ratename, rateval) in enumerate(self.rates.items()):
+      self.ratevalues.append(self.arrheniusRate(energy, rateval))
+
+  def setDensity(self, species, density):
+    """ Set density for named species
+    """
+    self.species[species] = density
+
   def printSODE(self):
-    #sode = []
+    """ Prints the system of differential equations
+    """
     for ispec, species in enumerate(self.species):
       if species not in self.constants:
         sode = str()
@@ -133,11 +197,308 @@ class MyVisitor(reactVisitor):
             for p in self.pvector[aelem[0][1]]:
               sode += (' ' +  str(list(self.species.items())[p[0]][0])
                        + (('^' + str(int(p[1]))) if p[1]>1 else ''))
-            #print(pcomp[isp])
-          #for ip, pcomp in enumerate(self.pvector):
-            #print
-            #print(aelem, pcomp)
         print(sode+strdiff)
+
+  def checkValues(self):
+    """ Checks if constants, diffusions and rates have values
+    """
+    for cname, cvalue in self.constants.items():
+      if cvalue is None:
+        for rname, rvalue in self.reactants.items():
+          if cname == rname:
+            print("[ee] Value for constant ", cname, "is needed")
+            return -1
+
+    for dname, dvalue in self.diffusions.items():
+      if dvalue is None:
+        print("[ee] Value for diffusion ", dname, "is needed")
+        return -2
+
+    for rname, rodict in self.rates.items():
+      if not rodict:
+        print("[ee] Aconstant for rate ", rname, "is needed")
+        return -3
+
+      if rodict['aconstant'] == 0:
+        print("[ee] Aconstant value for rate ", rname, "is ", rodict['aconstant'])
+        return -4
+
+      for sname, svalue in self.species.items():
+        if sname in self.reactants:
+          if svalue is None:
+            print("[ee] Density ", sname, "is None")
+            return -5
+    # all checks passed
+    return 0
+
+  def genSODE(self):
+    """ Generates the system of differential equations (SODE)
+
+        Stores the SODE in a nsode. Each entry is a tuple with the following
+        structure:
+        (specie_index, monomial, monomial, ..., diffusion_index)
+        monomial consists in a tuple
+        (prefactor, ratevalue_index, species, species, ...)
+        species is the tuple
+        ('name', value)
+    """
+
+    # assigns the constant value to tuple species
+    for ispec, species in enumerate(self.species):
+      if species in self.constants:
+        self.species[species] = self.constants[species]
+
+    # checks if we have all values
+    if self.checkValues() < 0:
+      print("[ii] Nothing to do!")
+      return -100
+
+    self.nsode = []
+    for ispec, species in enumerate(self.species):
+      if species not in self.constants:
+        monomial = []
+        #strdiff = (str(' - D[' + species + ']' + species) if species in self.diffusions else '')
+        #diffterm = self.diffusions[species] if species in self.diffusions else None
+        diffterm = list(self.diffusions.keys()).index(species) if species in self.diffusions else None
+        for ia, aelem in enumerate(self.aelements):
+          # check row
+          eqdiffelem = []
+          if aelem[0][0] == ispec:
+            #eqdiffelem.append(list(self.rates.items())[aelem[0][1]]) <- rate dict
+            #eqdiffelem.append(self.ratevalues[aelem[0][1])
+            eqdiffelem.append(aelem[1])#<- prefactor
+            eqdiffelem.append(aelem[0][1])#<- rate index
+            for p in self.pvector[aelem[0][1]]:
+              eqdiffelem.append(p)
+          if eqdiffelem:
+            #eqdiffelem.append(diffterm)
+            monomial.append(tuple(eqdiffelem))
+            #monomial.append(diffterm)
+        tmptuple = (list(self.species.keys()).index(species), *(tuple(monomial)), diffterm)
+        #self.nsode.append(tuple(monomial))
+        self.nsode.append(tmptuple)
+
+    #print(self.nsode)
+    #for n in self.nsode:
+      #print(n)
+
+  def sysODE(self, t, ndensity):
+    """ Generates the system of differential equations
+    """
+    #self.odesystem = []
+    #vars = np.zeros(len(self.nsode))
+
+    neq = len(self.nsode)
+    odesystem = np.zeros(neq)
+    # iterate in equation r.h.s line
+    # ns = (eq-specie monome monome monome ... diffusion)
+    # tns = monome/diffusion = (rate specie specie ...)
+    # specie = (nspecie density)
+
+    for ins, nsline in enumerate(self.nsode):
+      # sum of monomials
+      polynomial = 0.0
+      #pstr = ''
+      # nsline[0] is the index of species, iterate in monomials
+      diffusion = 0.0
+      for monos in nsline[1:]:
+        # monos[0] is a prefactor
+        # monos[1] is the index of rate
+        # if tns is a monomial (tuple) multiply it
+        monomial = 0
+        #mstr = ''
+        if isinstance(monos, tuple):
+          monomial = monos[0] * self.ratevalues[monos[1]]
+          #mstr = str(monos[0]) + ' x '+ str(self.ratevalues[monos[1]]) + ' '
+          #print(self.ratevalues[monos[0]])
+          #print(self.odeindices)
+          for spec in monos[2:]:
+            if spec[0] in self.odeindices:
+              monomial *= np.power(ndensity[self.odeindices[spec[0]]], spec[1])
+              #mstr += ' x ' + str(np.power(ndensity[self.odeindices[spec[0]]], spec[1]))
+            else:
+              monomial *= np.power(list(self.species.items())[spec[0]][1], spec[1])
+              #print('MONO')
+              ##mstr += ' x ' + str(np.power(list(self.species.items())[spec[0]][1], spec[1]))
+        else:# maybe is diffusion
+          if isinstance(monos, float):
+            diffusion = -self.ratevalues[0] * ndensity[ins]
+        polynomial += monomial
+        #pstr += ' + ' + mstr
+      odesystem[ins] = polynomial + diffusion
+      #print(pstr + ' + ' + str(diffusion))
+    #res = np.copy(self.s)
+    #print(vars)
+    #print(odesystem)
+    return odesystem
+
+  def sysJacobian(self):
+    """ Returns the evaluated Jacobian
+    """
+    # iterate in species, rows
+    redrow = 0
+    self.jacobian = []
+    for ispec, ispecies in enumerate(self.species):
+      # check if species is constant
+      jacdiffusion = None
+      if ispecies not in self.constants:
+        jacode = str()
+        # iterate in species, cols
+        redcol = 0
+        #strdiff = (str(' - D[' + ispecies + ']') if ispecies in self.diffusions else '')
+        #if strdiff:
+          #print('J', (redrow, redrow), '=', strdiff)
+        if ispecies in self.diffusions:
+          jacdiffusion = list(self.diffusions.keys()).index(ispecies)
+          self.jacobian.append(((redrow, redrow), jacdiffusion))
+        for jspec, jspecies in enumerate(self.species):
+          # check if species is constant
+          if jspecies not in self.constants:
+            # Jacobian indices
+            pair = (ispec, jspec)
+            # iterate in Jacobian matrix elements
+            for ijelem, jelem in enumerate(self.jacelements):
+              # if the indices == to element indices, we have an element
+              if pair == jelem[0]:
+                redpair = (redrow, redcol)
+                # computes the prefactor
+                #strfactor = self.strsign(int(jelem[1]*jelem[2]))
+                jacfactor = jelem[1]*jelem[2]
+                # if jelem[3] is empty, we have a constant times the rate
+                if not jelem[3]:
+                  #print('J', redpair, '=', strfactor, str(list(self.rates.items())[jelem[4]][0]))
+                  self.jacobian.append((redpair, (jacfactor, jelem[4], None)))
+                else:
+                  # in this case we have a list of species
+                  strksp = ''
+                  jacterms = []
+                  for kspec, kspecies in enumerate(jelem[3]):
+                    #print(kspecies[0])
+                    #strksp += (str(list(self.species.items())[kspecies[0]][0])
+                            #+ (('^' + str(int(kspecies[1]))) if kspecies[1]>1 else ''))
+                    jacterms.append(kspecies)
+                    #print(kspecies)
+                  #print('J', redpair, '=', strfactor, str(list(self.rates.items())[jelem[4]][0]), strksp)
+                  self.jacobian.append((redpair, (jacfactor, jelem[4], *tuple(jacterms))))
+            redcol += 1
+        redrow += 1
+    for j in self.nsode:
+      print(j)
+
+    for j in self.jacobian:
+      print(j)
+
+
+  #def stepSODE(self):
+    #""" Solves step of the system of differential equations
+    #"""
+
+    ## WARNING FIXME
+    ## resolves specie : #eq specie (without constants)
+    #for ins, ns in enumerate(self.nsode):
+      #self.odeindices.update({ns[0]: ins})
+
+    #neq = len(self.nsode)
+    #solver = ode(self.sysODE)
+    ##solver.set_integrator('vode', method='bdf')
+    ##solver.set_integrator('dop853')
+    #solver.set_integrator('lsoda')
+    ##solver.set_integrator('dopri5')
+    ##[  7.15827069e-01   9.18553452e-06   2.84163746e-01]
+    ##parameters to solver
+    ##solver.set_f_params()
+
+    #indensity = [list(self.species.values())[ns[0]] for ns in self.nsode]
+    #solver.set_initial_value(indensity, t0)
+
+    #t = np.linspace(t0, tf, N)
+    #print(t)
+    #outdensity = np.zeros((N, neq))
+    #outdensity[0] = indensity
+    #print(indensity)
+    #k = 1
+    #while solver.successful() and solver.t < tf:
+      #solver.integrate(t[k])
+      #outdensity[k] = solver.y
+      #print('sum = ', np.sum(outdensity[k]))
+      #k += 1
+
+    ## Plot
+
+    #for n, ns in enumerate(self.nsode):
+      #fig = plt.figure()
+      #label = list(self.species.keys())[ns[0]]
+      #plt.plot(t, outdensity[:, n], label = label)
+      #plt.ylabel('Density')
+      #plt.xlabel('t')
+      #plt.grid(True)
+      #plt.legend()
+      #plt.show()
+
+    #print(outdensity[-1])
+    ##return res
+
+
+  def solveSODE(self, tf, N = 1000, t0 = 0.0):
+    """ Solves the system of differential equations
+    """
+
+    # resolves specie : #eq specie (without constants)
+    for ins, ns in enumerate(self.nsode):
+      self.odeindices.update({ns[0]: ins})
+
+    neq = len(self.nsode)
+    solver = ode(self.sysODE)
+    #solver.set_integrator('vode', method='bdf')
+    #solver.set_integrator('dop853')
+    solver.set_integrator('lsoda')
+    #solver.set_integrator('dopri5')
+    #[  7.15827069e-01   9.18553452e-06   2.84163746e-01]
+    #parameters to solver
+    #solver.set_f_params()
+
+    indensity = [list(self.species.values())[ns[0]] for ns in self.nsode]
+    solver.set_initial_value(indensity, t0)
+
+    t = np.linspace(t0, tf, N)
+    print(t)
+    outdensity = np.zeros((N, neq))
+    outdensity[0] = indensity
+    print(indensity)
+    k = 1
+    while solver.successful() and solver.t < tf:
+      solver.integrate(t[k])
+      outdensity[k] = solver.y
+      print('sum = ', np.sum(outdensity[k]))
+      k += 1
+
+    # Plot
+
+    fig = plt.figure()
+    for n, ns in enumerate(self.nsode):
+
+      label = list(self.species.keys())[ns[0]]
+      plt.plot(t, outdensity[:, n], label = label)
+    plt.ylabel('Density')
+    #plt.yscale('log')
+    plt.xlabel('t')
+    plt.grid(True)
+    plt.legend()
+    plt.show()
+
+    #for n, ns in enumerate(self.nsode):
+      #fig = plt.figure()
+      #label = list(self.species.keys())[ns[0]]
+      #plt.plot(t, outdensity[:, n], label = label)
+      #plt.ylabel('Density')
+      #plt.xlabel('t')
+      #plt.grid(True)
+      #plt.legend()
+      #plt.show()
+
+    print(outdensity[-1])
+    #return res
+
 
   def printJacobian(self):
     # iterate in species, rows
@@ -178,6 +539,62 @@ class MyVisitor(reactVisitor):
             redcol += 1
         redrow += 1
 
+  def genJacobian(self):
+    """ Populate the list with Jacobian terms
+    """
+    # iterate in species, rows
+    redrow = 0
+    self.jacobian = []
+    for ispec, ispecies in enumerate(self.species):
+      # check if species is constant
+      jacdiffusion = None
+      if ispecies not in self.constants:
+        jacode = str()
+        # iterate in species, cols
+        redcol = 0
+        #strdiff = (str(' - D[' + ispecies + ']') if ispecies in self.diffusions else '')
+        #if strdiff:
+          #print('J', (redrow, redrow), '=', strdiff)
+        if ispecies in self.diffusions:
+          jacdiffusion = list(self.diffusions.keys()).index(ispecies)
+          self.jacobian.append(((redrow, redrow), jacdiffusion))
+        for jspec, jspecies in enumerate(self.species):
+          # check if species is constant
+          if jspecies not in self.constants:
+            # Jacobian indices
+            pair = (ispec, jspec)
+            # iterate in Jacobian matrix elements
+            for ijelem, jelem in enumerate(self.jacelements):
+              # if the indices == to element indices, we have an element
+              if pair == jelem[0]:
+                redpair = (redrow, redcol)
+                # computes the prefactor
+                #strfactor = self.strsign(int(jelem[1]*jelem[2]))
+                jacfactor = jelem[1]*jelem[2]
+                # if jelem[3] is empty, we have a constant times the rate
+                if not jelem[3]:
+                  #print('J', redpair, '=', strfactor, str(list(self.rates.items())[jelem[4]][0]))
+                  self.jacobian.append((redpair, (jacfactor, jelem[4], None)))
+                else:
+                  # in this case we have a list of species
+                  strksp = ''
+                  jacterms = []
+                  for kspec, kspecies in enumerate(jelem[3]):
+                    #print(kspecies[0])
+                    #strksp += (str(list(self.species.items())[kspecies[0]][0])
+                            #+ (('^' + str(int(kspecies[1]))) if kspecies[1]>1 else ''))
+                    jacterms.append(kspecies)
+                    #print(kspecies)
+                  #print('J', redpair, '=', strfactor, str(list(self.rates.items())[jelem[4]][0]), strksp)
+                  self.jacobian.append((redpair, (jacfactor, jelem[4], *tuple(jacterms))))
+            redcol += 1
+        redrow += 1
+    for j in self.nsode:
+      print(j)
+
+    for j in self.jacobian:
+      print(j)
+
   def strsign(self, number):
     """ Return a string with sign of number and the number if abs(number) > 1
     """
@@ -213,11 +630,6 @@ class MyVisitor(reactVisitor):
     for ireaction in np.arange(self.nreactions):
       pcomponents = [(ritem[1], ritem[2]) for ritem in self.relements if ritem[0] == ireaction]
       self.pvector.append(pcomponents)
-
-    #print("p")
-    #for p in self.pvector:
-      #print(p)
-    #print()
 
     # list of tuple, float, list
     # (row, col), factor, optional [species pair]
@@ -262,53 +674,9 @@ class MyVisitor(reactVisitor):
           #print(aelem[0], jelem[0], '=', aelem, jelem)
           self.jacelements.append([(aelem[0][0], jelem[0][1]), aelem[1], jelem[1], jelem[2], jelem[0][0]])
 
-    #print("J")
-    #for j in self.jacelements:
-      #print(j)
-
-
-    #print(self.jelements)
-
-    #for j in self.jelements:
-      #print(j)
-      #for r in self.relements:
-        #print(r)
-
-    #for ispec, species in enumerate(self.species):
-    ##sode = []
-    #for ispec, species in enumerate(self.species):
-      #sode = str()
-      ##sode.append("d[" + species + "]/dt  = ")
-      #sode += "d[" + species + "]/dt  ="
-      #for ia, aelem in enumerate(self.aelements):
-        ## check row
-        #if aelem[0][0] == ispec:
-          ##for ip, pcomp in enumerate(self.pvector):
-            ##[(0, 1.0), (1, 1.0), (2, 1.0)]
-          #strprefac = self.strsign(int(aelem[1]))
-
-          #sode +=  strprefac + str(list(self.rates.items())[aelem[0][1]][0])
-          ## select component of p
-          #for p in self.pvector[aelem[0][1]]:
-            #sode += ' ' +  str(list(self.species.items())[p[0]][0]) + (('^' + str(int(p[1]))) if p[1]>1 else '')
-          ##print(pcomp[isp])
-        ##for ip, pcomp in enumerate(self.pvector):
-          ##print
-          ##print(aelem, pcomp)
-      #print(sode)
-    #for ireaction, reactants in enumerate(self.uniquereactantslist):
-      #for p in self.pvector:
-        #for t in p:
-          #if t[0] == 
-            #print(t)
   #def visitEntry(self, ctx):
     #reaction = self.visit(ctx.reaction())
     #return 0
-
-  def genSysDE(self):
-    """ Generates the system of differential equations
-    """
-    return 0
 
   def visitReaction(self, ctx):
     r = self.visit(ctx.reactants())
@@ -456,7 +824,7 @@ def readAndPrint(str_stream):
   tree = parser.entries()
 
   #print(tree.toStringTree(recog=parser))
-  visitor = MyVisitor()
+  visitor = ReactVisitor()
   visitor.visit(tree)
 
   print()
@@ -482,29 +850,62 @@ if __name__ == '__main__':
     tree = parser.entries()
 
     #print(tree.toStringTree(recog=parser))
-    visitor = MyVisitor()
-    visitor.visit(tree)
+    react = ReactVisitor()
+    react.visit(tree)
 
-    #print("Constants  : ", visitor.constants)
-    print("Diffusions : ", visitor.diffusions)
-    #print("Species    : ", visitor.species)
-    #print("Reactants  : ", visitor.reactants)
-    #print("Products   : ", visitor.products)
+    print("Constants  : ", react.constants)
+    print("Diffusions : ", react.diffusions)
+    print("Species    : ", react.species)
+    #print("Reactants  : ", react.reactants)
+    #print("Products   : ", react.products)
 
-    #print('reactants list :', visitor.reactantslist)
-    #print('products list  :', visitor.productslist)
+    #print('reactants list :', react.reactantslist)
+    #print('products list  :', react.productslist)
 
     #print()
 
-    #print('rates  :', visitor.rates)
+    print('rates  :', react.rates)
 
     print()
-    visitor.genElements()
+    react.genElements()
 
     print()
-    visitor.printSODE()
+    react.printSODE()
 
     print()
-    visitor.printJacobian()
+    #react.printJacobian()
+
+
+    react.updateRates(1.36)
+    print(react.ratevalues)
+
+##
+    idens = 1.0e10
+    react.setDensity('e', idens)
+    react.setDensity('Ar+', idens)
+    react.setDensity('Ar*', idens)
 
     print()
+    react.genSODE()
+
+    print()
+    react.solveSODE(10.0)
+##
+    #react.setDensity('A', 1.0)
+    #react.setDensity('B', 0.0)
+    #react.setDensity('C', 0.0)
+
+    #print()
+    #react.genSODE()
+
+    #print()
+    #react.solveSODE(40.0)
+##
+    print()
+    react.genJacobian()
+
+    #print()
+    #print(react.aelements)
+
+    #print()
+    #print(react.pvector)
